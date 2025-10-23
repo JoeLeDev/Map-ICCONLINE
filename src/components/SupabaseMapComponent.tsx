@@ -67,7 +67,9 @@ const SupabaseMapComponent: React.FC = () => {
           description: newMember.description,
           poste: '',
           ville: '',
-          pays: ''
+          pays: '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         });
         
         setNewMember({ name: '', address: '', description: '' });
