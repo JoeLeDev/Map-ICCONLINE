@@ -2,7 +2,7 @@ import React from 'react';
 import dynamic from 'next/dynamic';
 
 // Import dynamique pour éviter les problèmes SSR avec Leaflet
-const MapComponent = dynamic(() => import('../components/MapComponent'), {
+const SupabaseMapComponent = dynamic(() => import('../components/SupabaseMapComponent'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-screen flex items-center justify-center bg-gray-100">
@@ -17,7 +17,7 @@ const MapComponent = dynamic(() => import('../components/MapComponent'), {
 const Home: React.FC = () => {
   return (
     <div className="w-full h-screen">
-      <MapComponent />
+      <SupabaseMapComponent />
     </div>
   );
 };

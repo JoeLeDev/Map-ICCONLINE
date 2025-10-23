@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MapContainer, TileLayer, useMap, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import { OpenStreetMapProvider } from 'leaflet-geosearch';
+import { useMembers } from '../hooks/useMembers';
 
 // Fix pour les icônes Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
