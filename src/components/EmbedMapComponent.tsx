@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, useMap, Marker, Popup } from 'react-leaflet';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import { OpenStreetMapProvider } from 'leaflet-geosearch';
+import { useMembers } from '../hooks/useMembers';
 
 // Fix pour les icônes Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -13,70 +13,63 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-interface KMLData {
-  name: string;
-  coordinates: [number, number];
-  description?: string;
-}
-
 const EmbedMapComponent: React.FC = () => {
-  const [kmlData, setKmlData] = useState<KMLData[]>([]);
+  const { members, loading, error } = useMembers();
   const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
   const [mapZoom, setMapZoom] = useState(6);
 
-  // Charger les données depuis le fichier CSV par défaut
+  // Centrer la carte sur les membres
   useEffect(() => {
-    const loadDefaultData = async () => {
-      try {
-        // Essayer de charger le fichier CSV par défaut
-        const response = await fetch('/membres-fio-mfi.csv');
-        if (response.ok) {
-          const csvText = await response.text();
-          const lines = csvText.split('\n');
-          const data: KMLData[] = [];
-          
-          for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            
-            const values = line.split(',').map(value => 
-              value.trim().replace(/^"(.*)"$/, '$1')
-            );
-            
-            if (values.length >= 8) {
-              const name = values[0] || 'Point sans nom';
-              const lat = parseFloat(values[1]);
-              const lng = parseFloat(values[2]);
-              const description = values[4] || '';
-              
-              if (!isNaN(lat) && !isNaN(lng)) {
-                data.push({
-                  name: name,
-                  coordinates: [lat, lng],
-                  description: description
-                });
-              }
-            }
-          }
-          
-          setKmlData(data);
-          
-          // Centrer la carte sur les données
-          if (data.length > 0) {
-            const bounds = data.map(item => item.coordinates);
-            const avgLat = bounds.reduce((sum, coord) => sum + coord[0], 0) / bounds.length;
-            const avgLng = bounds.reduce((sum, coord) => sum + coord[1], 0) / bounds.length;
-            setMapCenter([avgLat, avgLng]);
-            setMapZoom(10);
-          }
-        }
-      } catch (error) {
-        console.log('Aucun fichier CSV par défaut trouvé');
-      }
-    };
+    if (members.length > 0) {
+      const latitudes = members.map(m => m.latitude);
+      const longitudes = members.map(m => m.longitude);
 
-    loadDefaultData();
-  }, []);
+      const minLat = Math.min(...latitudes);
+      const maxLat = Math.max(...latitudes);
+      const minLng = Math.min(...longitudes);
+      const maxLng = Math.max(...longitudes);
+
+      const centerLat = (minLat + maxLat) / 2;
+      const centerLng = (minLng + maxLng) / 2;
+
+      setMapCenter([centerLat, centerLng]);
+
+      // Calculer un zoom approprié
+      const latDiff = maxLat - minLat;
+      const lngDiff = maxLng - minLng;
+
+      let newZoom = 6;
+      if (members.length === 1) {
+        newZoom = 12;
+      } else if (latDiff > 0.01 || lngDiff > 0.01) {
+        const zoomLat = Math.round(Math.log(360 / latDiff) / Math.LN2);
+        const zoomLng = Math.round(Math.log(360 / lngDiff) / Math.LN2);
+        newZoom = Math.min(zoomLat, zoomLng, 12);
+      }
+      setMapZoom(newZoom);
+    }
+  }, [members]);
+
+  if (loading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Chargement de la carte...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-red-50">
+        <div className="text-center">
+          <p className="text-red-600">Erreur de chargement: {error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full">
@@ -91,13 +84,22 @@ const EmbedMapComponent: React.FC = () => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         
-        {kmlData.map((point, index) => (
-          <Marker key={index} position={point.coordinates}>
+        {members.map((member) => (
+          <Marker key={member.id} position={[member.latitude, member.longitude]}>
             <Popup>
               <div>
-                <h3 className="font-bold">{point.name}</h3>
-                {point.description && (
-                  <p className="mt-2 text-sm">{point.description}</p>
+                <h3 className="font-bold">{member.name}</h3>
+                {member.description && (
+                  <p className="mt-2 text-sm">{member.description}</p>
+                )}
+                {member.address && (
+                  <p className="mt-1 text-xs text-gray-600">📍 {member.address}</p>
+                )}
+                {member.poste && (
+                  <p className="mt-1 text-xs text-blue-600">💼 {member.poste}</p>
+                )}
+                {member.ville && member.pays && (
+                  <p className="mt-1 text-xs text-green-600">🏙️ {member.ville}, {member.pays}</p>
                 )}
               </div>
             </Popup>

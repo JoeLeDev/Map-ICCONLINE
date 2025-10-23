@@ -16,12 +16,14 @@ L.Icon.Default.mergeOptions({
 
 const SupabaseMapComponent: React.FC = () => {
   const { members, loading, error, addMember } = useMembers();
-  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
   const [mapZoom, setMapZoom] = useState(6);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newMember, setNewMember] = useState({ name: '', address: '', description: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isGeocoding, setIsGeocoding] = useState(false);
 
   // Cache pour éviter de géocoder plusieurs fois la même adresse
   const geocodeCache = useRef<Map<string, [number, number] | null>>(new Map());
@@ -45,6 +47,117 @@ const SupabaseMapComponent: React.FC = () => {
       console.error('Erreur de géocodage:', error);
       geocodeCache.current.set(address, null);
       return null;
+    }
+  };
+
+  // Fonction pour gérer l'upload de fichier
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const isKML = file.name.toLowerCase().endsWith('.kml') || file.type === 'application/vnd.google-earth.kml+xml';
+    const isCSV = file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv';
+
+    if (!isKML && !isCSV) {
+      alert('Veuillez sélectionner un fichier KML ou CSV valide');
+      return;
+    }
+
+    setIsLoadingFile(true);
+    setLoadingProgress(0);
+
+    try {
+      const fileText = await file.text();
+      let parsedData: any[] = [];
+
+      if (isCSV) {
+        // Parser CSV
+        const lines = fileText.split('\n');
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          const values = line.split(',').map(value => 
+            value.trim().replace(/^"(.*)"$/, '$1')
+          );
+
+          if (values.length >= 3) {
+            const name = values[0] || 'Point sans nom';
+            const lat = parseFloat(values[1]);
+            const lng = parseFloat(values[2]);
+            const address = values[3] || '';
+            const description = values[4] || '';
+
+            if (!isNaN(lat) && !isNaN(lng)) {
+              // Ajouter directement en base
+              await addMember({
+                name,
+                latitude: lat,
+                longitude: lng,
+                address,
+                description,
+                poste: '',
+                ville: '',
+                pays: '',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+            }
+          }
+        }
+      } else if (isKML) {
+        // Parser KML
+        const parser = new DOMParser();
+        const kmlDoc = parser.parseFromString(fileText, 'text/xml');
+        const placemarks = kmlDoc.querySelectorAll('Placemark');
+
+        for (let i = 0; i < placemarks.length; i++) {
+          const placemark = placemarks[i];
+          const nameElement = placemark.querySelector('name');
+          const addressElement = placemark.querySelector('address');
+          const descriptionElement = placemark.querySelector('description');
+
+          const name = nameElement?.textContent || 'Point sans nom';
+          const address = addressElement?.textContent?.trim() || '';
+          const description = descriptionElement?.textContent?.replace(/<br>/g, '\n') || '';
+
+          if (address) {
+            // Géocoder l'adresse
+            const coordinates = await geocodeAddress(address);
+            if (coordinates) {
+              await addMember({
+                name,
+                latitude: coordinates[0],
+                longitude: coordinates[1],
+                address,
+                description,
+                poste: '',
+                ville: '',
+                pays: '',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+            }
+          }
+
+          // Mettre à jour la progression
+          const progress = Math.round(((i + 1) / placemarks.length) * 100);
+          setLoadingProgress(progress);
+        }
+      }
+
+      alert(`Fichier chargé avec succès !`);
+      
+    } catch (error) {
+      console.error('Erreur lors du chargement du fichier:', error);
+      alert('Erreur lors du chargement du fichier');
+    } finally {
+      setIsLoadingFile(false);
+      setLoadingProgress(0);
+      // Réinitialiser l'input
+      if (event.target) {
+        event.target.value = '';
+      }
     }
   };
 
@@ -119,7 +232,7 @@ const SupabaseMapComponent: React.FC = () => {
                 ref={fileInputRef}
                 type="file"
                 accept=".kml,.csv"
-                onChange={() => {}} // Désactivé pour la démo
+                onChange={handleFileUpload}
                 className="hidden"
                 id="file-input"
               />
