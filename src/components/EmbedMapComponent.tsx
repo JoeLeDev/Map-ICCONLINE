@@ -3,7 +3,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MapContainer, TileLayer, useMap, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { OpenStreetMapProvider } from 'leaflet-geosearch';
 
 // Fix pour les icônes Leaflet
