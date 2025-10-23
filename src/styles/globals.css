@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Styles pour Leaflet */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+
+/* Styles personnalisés pour les popups */
+.leaflet-popup-content {
+  margin: 8px 12px;
+  line-height: 1.4;
+}
+
+.leaflet-popup-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.leaflet-popup-content p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Animation pour le chargement */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
