@@ -52,4 +52,3 @@ L'application supporte les fichiers KML standard avec des éléments `<Placemark
 
 L'application peut être déployée sur Vercel, Netlify ou tout autre service de déploiement compatible avec Next.js.
 # Map-ICCONLINE
-# Map-ICCONLINE
