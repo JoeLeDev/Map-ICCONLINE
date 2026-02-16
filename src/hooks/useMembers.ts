@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -22,8 +22,44 @@ export const useMembers = () => {
   const [error, setError] = useState<string | null>(null);
   const subscriptionRef = useRef<RealtimeChannel | null>(null);
 
+  // Fonction pour nettoyer et normaliser les données d'un membre
+  const cleanMemberData = (member: Member): Member => {
+    let cleanedAddress = member.address || '';
+    let cleanedDescription = member.description || '';
+
+    // Si on a les champs ville et pays, construire l'adresse correctement
+    if (member.ville || member.pays) {
+      const addressParts: string[] = [];
+      if (member.ville) addressParts.push(member.ville);
+      if (member.pays) addressParts.push(member.pays);
+      cleanedAddress = addressParts.join(' ');
+    }
+
+    // Nettoyer la description : ne garder que "Poste: ..." et retirer ville/pays si présents
+    if (cleanedDescription) {
+      // Extraire seulement la partie "Poste: ..."
+      const posteMatch = cleanedDescription.match(/Poste:\s*([^\n]+)/);
+      if (posteMatch) {
+        cleanedDescription = `Poste: ${posteMatch[1].trim()}`;
+      } else {
+        // Si pas de format "Poste: ...", garder la description telle quelle mais retirer les lignes Ville/Pays
+        cleanedDescription = cleanedDescription
+          .split('\n')
+          .filter(line => !line.match(/^(Ville|Pays):/i))
+          .join('\n')
+          .trim();
+      }
+    }
+
+    return {
+      ...member,
+      address: cleanedAddress,
+      description: cleanedDescription
+    };
+  };
+
   // Charger tous les membres depuis Supabase
-  const loadMembers = async () => {
+  const loadMembers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -50,22 +86,17 @@ export const useMembers = () => {
         pays: m.pays
       })));
       
-      // Vérifier s'il y a des doublons dans les données
-      if (data) {
-        data.forEach(member => {
-          if (member.description && member.address) {
-            // Vérifier si l'adresse est dans la description
-            if (member.description.includes(member.address) || member.address.includes(member.description)) {
-              console.warn('⚠️ Doublon potentiel détecté pour:', member.name, {
-                address: member.address,
-                description: member.description
-              });
-            }
-          }
-        });
-      }
+      // Nettoyer et normaliser les données de tous les membres
+      const cleanedData = data?.map(member => cleanMemberData(member)) || [];
       
-      setMembers(data || []);
+      // Log après nettoyage
+      console.log('🧹 Données nettoyées - Exemples:', cleanedData.slice(0, 3).map(m => ({
+        name: m.name,
+        address: m.address,
+        description: m.description
+      })));
+      
+      setMembers(cleanedData);
       console.log('✅ Membres chargés avec succès');
     } catch (err) {
       console.error('❌ Erreur lors du chargement:', err);
@@ -73,7 +104,7 @@ export const useMembers = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Ajouter un membre
   const addMember = async (memberData: Omit<Member, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Member, 'created_at' | 'updated_at'>>) => {
@@ -159,13 +190,15 @@ export const useMembers = () => {
           console.log('🔄 Changement détecté dans la base de données:', payload.eventType);
           
           if (payload.eventType === 'INSERT') {
-            // Nouveau membre ajouté
-            setMembers((prev) => [payload.new as Member, ...prev]);
+            // Nouveau membre ajouté - nettoyer les données
+            const cleanedMember = cleanMemberData(payload.new as Member);
+            setMembers((prev) => [cleanedMember, ...prev]);
           } else if (payload.eventType === 'UPDATE') {
-            // Membre mis à jour
+            // Membre mis à jour - nettoyer les données
+            const cleanedMember = cleanMemberData(payload.new as Member);
             setMembers((prev) =>
               prev.map((member) =>
-                member.id === payload.new.id ? (payload.new as Member) : member
+                member.id === cleanedMember.id ? cleanedMember : member
               )
             );
           } else if (payload.eventType === 'DELETE') {
@@ -192,7 +225,7 @@ export const useMembers = () => {
         console.log('🔌 Subscription Supabase fermée');
       }
     };
-  }, []);
+  }, [loadMembers]);
 
   return {
     members,
