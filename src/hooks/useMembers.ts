@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface Member {
   id: string;
@@ -19,28 +20,55 @@ export const useMembers = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const subscriptionRef = useRef<any>(null);
+  const subscriptionRef = useRef<RealtimeChannel | null>(null);
 
   // Charger tous les membres depuis Supabase
   const loadMembers = async () => {
     setLoading(true);
     setError(null);
     try {
+      // Forcer un rechargement sans cache en ajoutant un timestamp
+      const timestamp = Date.now();
+      console.log(`🔄 Rechargement des membres (timestamp: ${timestamp})...`);
+      
       const { data, error: supabaseError } = await supabase
         .from('members')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (supabaseError) throw supabaseError;
-      // Log pour debug - voir les données récupérées
-      console.log('📊 Membres récupérés depuis Supabase:', data?.map(m => ({
+      
+      // Log détaillé pour debug - voir les données récupérées
+      console.log('📊 Membres récupérés depuis Supabase:', data?.length || 0, 'membres');
+      console.log('📋 Détails des premiers membres:', data?.slice(0, 3).map(m => ({
         id: m.id,
         name: m.name,
         address: m.address,
-        description: m.description
+        description: m.description,
+        poste: m.poste,
+        ville: m.ville,
+        pays: m.pays
       })));
+      
+      // Vérifier s'il y a des doublons dans les données
+      if (data) {
+        data.forEach(member => {
+          if (member.description && member.address) {
+            // Vérifier si l'adresse est dans la description
+            if (member.description.includes(member.address) || member.address.includes(member.description)) {
+              console.warn('⚠️ Doublon potentiel détecté pour:', member.name, {
+                address: member.address,
+                description: member.description
+              });
+            }
+          }
+        });
+      }
+      
       setMembers(data || []);
+      console.log('✅ Membres chargés avec succès');
     } catch (err) {
+      console.error('❌ Erreur lors du chargement:', err);
       setError(err instanceof Error ? err.message : 'Erreur inconnue');
     } finally {
       setLoading(false);
@@ -53,6 +81,7 @@ export const useMembers = () => {
     setError(null);
     try {
       // Ne pas envoyer created_at et updated_at car Supabase les génère automatiquement
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { created_at, updated_at, ...dataToSend } = memberData;
       const response = await fetch('/api/members', {
         method: 'POST',
