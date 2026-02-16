@@ -15,7 +15,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const SupabaseMapComponent: React.FC = () => {
-  const { members, loading, error, addMember } = useMembers();
+  const { members, loading, error, addMember, loadMembers } = useMembers();
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
@@ -255,6 +255,15 @@ const SupabaseMapComponent: React.FC = () => {
                 className="bg-purple-500 hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               >
                 🎯 Centrer
+              </button>
+              
+              <button
+                onClick={() => loadMembers()}
+                disabled={loading}
+                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+              >
+                <span>🔄</span>
+                <span>{loading ? 'Chargement...' : 'Rafraîchir'}</span>
               </button>
               
               <button

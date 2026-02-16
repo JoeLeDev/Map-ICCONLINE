@@ -32,6 +32,13 @@ export const useMembers = () => {
         .order('created_at', { ascending: false });
 
       if (supabaseError) throw supabaseError;
+      // Log pour debug - voir les données récupérées
+      console.log('📊 Membres récupérés depuis Supabase:', data?.map(m => ({
+        id: m.id,
+        name: m.name,
+        address: m.address,
+        description: m.description
+      })));
       setMembers(data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue');
