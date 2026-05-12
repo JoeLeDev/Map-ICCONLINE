@@ -133,8 +133,8 @@ const EmbedMapComponent: React.FC = () => {
           La famille ICC Online rassemble aujourd'hui{' '}
           <span className="font-semibold text-gray-900">
             {memberCount.toLocaleString('fr-FR')}
-          </span>{' '}
-          {memberCount > 1 ? 'membres répartis' : 'membre'} dans le monde au sein
+          {' '}
+          {memberCount > 1 ? 'membres répartis' : 'membre'}</span> dans le monde au sein
           de nos FIO (Familles d'Impact Online). Chaque point sur la carte
           représente un membre connecté à notre communauté.
         </p>
