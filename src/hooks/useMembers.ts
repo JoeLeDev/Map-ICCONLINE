@@ -20,7 +20,15 @@ export const useMembers = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Statut Realtime séparé de l'erreur de chargement : une déconnexion WebSocket
+  // ne doit pas faire disparaître la carte si on a déjà des données en mémoire.
+  const [realtimeStatus, setRealtimeStatus] = useState<
+    'connecting' | 'connected' | 'disconnected'
+  >('connecting');
   const subscriptionRef = useRef<RealtimeChannel | null>(null);
+  // Compteur de tentatives pour le back-off exponentiel de reconnexion Realtime.
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fonction pour nettoyer et normaliser les données d'un membre
   const cleanMemberData = (member: Member): Member => {
@@ -173,57 +181,131 @@ export const useMembers = () => {
 
   // Charger les membres et configurer la subscription en temps réel
   useEffect(() => {
-    // Charger les membres au montage
-    loadMembers();
+    let isMounted = true;
 
-    // Configurer la subscription Supabase en temps réel
-    const subscription = supabase
-      .channel('members-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Écouter tous les événements (INSERT, UPDATE, DELETE)
-          schema: 'public',
-          table: 'members'
-        },
-        (payload) => {
-          console.log('🔄 Changement détecté dans la base de données:', payload.eventType);
-          
-          if (payload.eventType === 'INSERT') {
-            // Nouveau membre ajouté - nettoyer les données
-            const cleanedMember = cleanMemberData(payload.new as Member);
-            setMembers((prev) => [cleanedMember, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            // Membre mis à jour - nettoyer les données
-            const cleanedMember = cleanMemberData(payload.new as Member);
-            setMembers((prev) =>
-              prev.map((member) =>
-                member.id === cleanedMember.id ? cleanedMember : member
-              )
-            );
-          } else if (payload.eventType === 'DELETE') {
-            // Membre supprimé
-            setMembers((prev) => prev.filter((member) => member.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ Subscription Supabase active - Mises à jour en temps réel activées');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ Erreur de subscription Supabase');
-          setError('Erreur de connexion en temps réel');
-        }
-      });
-
-    subscriptionRef.current = subscription;
-
-    // Nettoyer la subscription au démontage
-    return () => {
+    const cleanupSubscription = () => {
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
-        console.log('🔌 Subscription Supabase fermée');
+        subscriptionRef.current = null;
       }
+    };
+
+    const setupSubscription = () => {
+      cleanupSubscription();
+
+      // Nom de canal unique par tentative pour éviter les conflits côté Supabase
+      // lors d'une reconnexion rapide.
+      const channelName = `members-changes-${Date.now()}`;
+      const subscription = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'members'
+          },
+          (payload) => {
+            console.log('🔄 Changement détecté dans la base de données:', payload.eventType);
+
+            if (payload.eventType === 'INSERT') {
+              const cleanedMember = cleanMemberData(payload.new as Member);
+              setMembers((prev) => [cleanedMember, ...prev]);
+            } else if (payload.eventType === 'UPDATE') {
+              const cleanedMember = cleanMemberData(payload.new as Member);
+              setMembers((prev) =>
+                prev.map((member) =>
+                  member.id === cleanedMember.id ? cleanedMember : member
+                )
+              );
+            } else if (payload.eventType === 'DELETE') {
+              setMembers((prev) => prev.filter((member) => member.id !== payload.old.id));
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (!isMounted) return;
+
+          if (status === 'SUBSCRIBED') {
+            console.log('✅ Subscription Supabase active - Temps réel activé');
+            setRealtimeStatus('connected');
+            reconnectAttemptsRef.current = 0;
+          } else if (
+            status === 'CHANNEL_ERROR' ||
+            status === 'TIMED_OUT' ||
+            status === 'CLOSED'
+          ) {
+            // Important : on NE met PAS `error` ici. La carte reste affichée
+            // avec les dernières données chargées. On tente une reconnexion
+            // automatique en back-off exponentiel (max 30 s).
+            console.warn(
+              `⚠️ Canal Realtime perdu (${status}). Reconnexion automatique...`
+            );
+            setRealtimeStatus('disconnected');
+
+            const attempt = reconnectAttemptsRef.current + 1;
+            reconnectAttemptsRef.current = attempt;
+            const delay = Math.min(1000 * 2 ** (attempt - 1), 30000);
+
+            if (reconnectTimeoutRef.current) {
+              clearTimeout(reconnectTimeoutRef.current);
+            }
+            reconnectTimeoutRef.current = setTimeout(() => {
+              if (!isMounted) return;
+              // On recharge les données pour rattraper ce qu'on a pu manquer,
+              // puis on relance la subscription.
+              loadMembers();
+              setupSubscription();
+            }, delay);
+          }
+        });
+
+      subscriptionRef.current = subscription;
+    };
+
+    // Recharger les données quand l'onglet redevient visible (cas typique :
+    // l'utilisateur revient sur l'iframe après l'avoir laissée idle longtemps).
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('👁️ Onglet redevenu visible - rafraîchissement');
+        loadMembers();
+        // Forcer une reconnexion propre du canal Realtime.
+        reconnectAttemptsRef.current = 0;
+        setupSubscription();
+      }
+    };
+
+    const handleOnline = () => {
+      console.log('🌐 Connexion réseau rétablie - rafraîchissement');
+      loadMembers();
+      reconnectAttemptsRef.current = 0;
+      setupSubscription();
+    };
+
+    loadMembers();
+    setupSubscription();
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+    }
+
+    return () => {
+      isMounted = false;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      cleanupSubscription();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+      }
+      console.log('🔌 Subscription Supabase fermée');
     };
   }, [loadMembers]);
 
@@ -231,6 +313,7 @@ export const useMembers = () => {
     members,
     loading,
     error,
+    realtimeStatus,
     loadMembers,
     addMember,
     updateMember,
