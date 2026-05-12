@@ -54,9 +54,6 @@ const EmbedMapComponent: React.FC = () => {
     <div className="w-full h-full flex flex-col bg-white">
       <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-lg sm:text-xl font-semibold text-gray-900">
-            Communauté ICC Online dans le monde
-          </h2>
           {realtimeStatus === 'disconnected' && (
             <span
               className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full"
