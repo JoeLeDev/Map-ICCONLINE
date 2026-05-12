@@ -134,7 +134,7 @@ const EmbedMapComponent: React.FC = () => {
           <span className="font-semibold text-gray-900">
             {memberCount.toLocaleString('fr-FR')}
           {' '}
-          {memberCount > 1 ? 'membres répartis' : 'membre'}</span> dans le monde au sein
+          {memberCount > 1 ? 'membres' : 'membre'}</span> répartis dans le monde au sein
           de nos FIO (Familles d'Impact Online). Chaque point sur la carte
           représente un membre connecté à notre communauté.
         </p>
