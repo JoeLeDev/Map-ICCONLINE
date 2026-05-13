@@ -16,19 +16,18 @@ export interface Member {
   updated_at: string;
 }
 
+/** Intervalle entre deux synchronisations complètes des membres (hors chargement initial). */
+const DATA_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // ~1 h
+
 export const useMembers = () => {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Statut Realtime séparé de l'erreur de chargement : une déconnexion WebSocket
-  // ne doit pas faire disparaître la carte si on a déjà des données en mémoire.
-  const [realtimeStatus, setRealtimeStatus] = useState<
-    'connecting' | 'connected' | 'disconnected'
-  >('connecting');
   const subscriptionRef = useRef<RealtimeChannel | null>(null);
-  // Compteur de tentatives pour le back-off exponentiel de reconnexion Realtime.
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Dernière réussite de chargement des membres (pour limiter les polls HTTP). */
+  const lastDataFetchAtRef = useRef(0);
 
   // Fonction pour nettoyer et normaliser les données d'un membre
   const cleanMemberData = (member: Member): Member => {
@@ -67,14 +66,18 @@ export const useMembers = () => {
   };
 
   // Charger tous les membres depuis Supabase
-  const loadMembers = useCallback(async () => {
-    setLoading(true);
+  const loadMembers = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      // Forcer un rechargement sans cache en ajoutant un timestamp
       const timestamp = Date.now();
-      console.log(`🔄 Rechargement des membres (timestamp: ${timestamp})...`);
-      
+      console.log(
+        `${silent ? '🔇' : '🔄'} Rechargement des membres (timestamp: ${timestamp})...`
+      );
+
       const { data, error: supabaseError } = await supabase
         .from('members')
         .select('*')
@@ -105,12 +108,17 @@ export const useMembers = () => {
       })));
       
       setMembers(cleanedData);
+      lastDataFetchAtRef.current = Date.now();
       console.log('✅ Membres chargés avec succès');
     } catch (err) {
       console.error('❌ Erreur lors du chargement:', err);
-      setError(err instanceof Error ? err.message : 'Erreur inconnue');
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'Erreur inconnue');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -228,33 +236,29 @@ export const useMembers = () => {
 
           if (status === 'SUBSCRIBED') {
             console.log('✅ Subscription Supabase active - Temps réel activé');
-            setRealtimeStatus('connected');
             reconnectAttemptsRef.current = 0;
           } else if (
             status === 'CHANNEL_ERROR' ||
             status === 'TIMED_OUT' ||
             status === 'CLOSED'
           ) {
-            // Important : on NE met PAS `error` ici. La carte reste affichée
-            // avec les dernières données chargées. On tente une reconnexion
-            // automatique en back-off exponentiel (max 30 s).
+            // Pas de loadMembers ici : évite de faire clignoter la carte et les
+            // requêtes en boucle. Les données sont resynchronisées toutes les ~1 h
+            // (timer + retour onglet si la dernière sync date de plus d'1 h).
             console.warn(
-              `⚠️ Canal Realtime perdu (${status}). Reconnexion automatique...`
+              `⚠️ Canal Realtime perdu (${status}). Reconnexion WebSocket seule...`
             );
-            setRealtimeStatus('disconnected');
 
             const attempt = reconnectAttemptsRef.current + 1;
             reconnectAttemptsRef.current = attempt;
-            const delay = Math.min(1000 * 2 ** (attempt - 1), 30000);
+            // Délais espacés (1 min → 15 min max) pour ne pas marteler Supabase.
+            const delay = Math.min(60_000 * attempt, 15 * 60_000);
 
             if (reconnectTimeoutRef.current) {
               clearTimeout(reconnectTimeoutRef.current);
             }
             reconnectTimeoutRef.current = setTimeout(() => {
               if (!isMounted) return;
-              // On recharge les données pour rattraper ce qu'on a pu manquer,
-              // puis on relance la subscription.
-              loadMembers();
               setupSubscription();
             }, delay);
           }
@@ -263,27 +267,32 @@ export const useMembers = () => {
       subscriptionRef.current = subscription;
     };
 
-    // Recharger les données quand l'onglet redevient visible (cas typique :
-    // l'utilisateur revient sur l'iframe après l'avoir laissée idle longtemps).
+    // Rafraîchir les données depuis l'API seulement si la dernière sync date de
+    // plus d'une heure (évite le « refresh en boucle » à chaque focus d'onglet).
+    const refreshDataIfStale = () => {
+      const last = lastDataFetchAtRef.current;
+      if (last === 0) return;
+      if (Date.now() - last < DATA_REFRESH_INTERVAL_MS) return;
+      console.log('⏰ Dernière sync > 1 h — rechargement silencieux des membres');
+      void loadMembers({ silent: true });
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        console.log('👁️ Onglet redevenu visible - rafraîchissement');
-        loadMembers();
-        // Forcer une reconnexion propre du canal Realtime.
-        reconnectAttemptsRef.current = 0;
-        setupSubscription();
+        refreshDataIfStale();
       }
     };
 
     const handleOnline = () => {
-      console.log('🌐 Connexion réseau rétablie - rafraîchissement');
-      loadMembers();
-      reconnectAttemptsRef.current = 0;
-      setupSubscription();
+      refreshDataIfStale();
     };
 
     loadMembers();
     setupSubscription();
+
+    const hourlyRefresh = setInterval(() => {
+      void loadMembers({ silent: true });
+    }, DATA_REFRESH_INTERVAL_MS);
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -294,6 +303,7 @@ export const useMembers = () => {
 
     return () => {
       isMounted = false;
+      clearInterval(hourlyRefresh);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -313,7 +323,6 @@ export const useMembers = () => {
     members,
     loading,
     error,
-    realtimeStatus,
     loadMembers,
     addMember,
     updateMember,

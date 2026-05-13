@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import { useMembers } from '../hooks/useMembers';
@@ -14,7 +14,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const EmbedMapComponent: React.FC = () => {
-  const { members, loading, error, realtimeStatus } = useMembers();
+  const { members, loading, error } = useMembers();
   const [mapCenter] = useState<[number, number]>([20, 0]); // Centre du monde avec légère inclinaison nord
   const [mapZoom] = useState(2); // Zoom pour voir le monde entier
 
@@ -52,21 +52,7 @@ const EmbedMapComponent: React.FC = () => {
 
   return (
     <div className="w-full h-full flex flex-col bg-white">
-      <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          {realtimeStatus === 'disconnected' && (
-            <span
-              className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full"
-              title="La connexion temps réel s'est interrompue. Reconnexion automatique en cours."
-            >
-              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-              Reconnexion en cours…
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 px-4 sm:px-6">
+      <div className="flex-1 min-h-0 px-4 sm:px-6 pt-4 sm:pt-6">
         <MapContainer
           center={mapCenter}
           zoom={mapZoom}
