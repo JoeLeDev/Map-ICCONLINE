@@ -18,11 +18,6 @@ const EmbedMapComponent: React.FC = () => {
   const [mapCenter] = useState<[number, number]>([20, 0]); // Centre du monde avec légère inclinaison nord
   const [mapZoom] = useState(2); // Zoom pour voir le monde entier
 
-  // Nombre total de membres dans toutes les FIO (Familles d'Impact Online).
-  // Une FIO étant un groupe de personnes, on compte ici le total de personnes,
-  // pas le nombre de groupes.
-  const memberCount = members.length;
-
   // Ne bloquer l'UI que pour le tout premier chargement et seulement si on n'a
   // encore aucune donnée. Une déconnexion Realtime ultérieure ne masquera plus
   // la carte.
@@ -112,18 +107,6 @@ const EmbedMapComponent: React.FC = () => {
             </Marker>
           ))}
         </MapContainer>
-      </div>
-
-      <div className="px-4 py-4 sm:px-6 sm:py-5">
-        <p className="text-sm sm:text-base text-gray-700 leading-relaxed">
-          La famille ICC Online rassemble aujourd'hui{' '}
-          <span className="font-semibold text-gray-900">
-            {memberCount.toLocaleString('fr-FR')}
-          {' '}
-          {memberCount > 1 ? 'membres' : 'membre'}</span> répartis dans le monde au sein
-          de nos FIO (Familles d'Impact Online). Chaque point sur la carte
-          représente un membre connecté à notre communauté.
-        </p>
       </div>
     </div>
   );
