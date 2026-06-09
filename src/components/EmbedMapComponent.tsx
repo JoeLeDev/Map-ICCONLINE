@@ -47,7 +47,7 @@ const EmbedMapComponent: React.FC = () => {
 
   return (
     <div className="w-full h-full flex flex-col bg-white">
-      <div className="flex-1 min-h-0 px-4 sm:px-6 pt-4 sm:pt-6">
+      <div className="flex-1 min-h-0 px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-5">
         <MapContainer
           center={mapCenter}
           zoom={mapZoom}
