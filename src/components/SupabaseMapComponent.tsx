@@ -6,6 +6,7 @@ import L from 'leaflet';
 import { OpenStreetMapProvider } from 'leaflet-geosearch';
 import { useMembers } from '../hooks/useMembers';
 import { memberDuplicateKey } from '../lib/memberKey';
+import { parseKmlPlacemarks } from '../lib/parseKml';
 
 // Fix pour les icônes Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -14,6 +15,9 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
+
+/** Nominatim impose ~1 req/s : en dessous, la plupart des géocodages échouent. */
+const GEOCODE_DELAY_MS = 1100;
 
 type MemberPayload = {
   name: string;
@@ -30,6 +34,7 @@ const SupabaseMapComponent: React.FC = () => {
   const { members, loading, error, addMember, updateMember, loadMembers } = useMembers();
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingStatus, setLoadingStatus] = useState('');
   const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
   const [mapZoom, setMapZoom] = useState(6);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -39,25 +44,30 @@ const SupabaseMapComponent: React.FC = () => {
 
   // Cache pour éviter de géocoder plusieurs fois la même adresse
   const geocodeCache = useRef<Map<string, [number, number] | null>>(new Map());
+  const geocodeProvider = useRef(new OpenStreetMapProvider());
 
   // Fonction pour géocoder une adresse
   const geocodeAddress = async (address: string): Promise<[number, number] | null> => {
-    if (geocodeCache.current.has(address)) {
-      return geocodeCache.current.get(address)!;
+    const query = address.trim();
+    if (!query) return null;
+
+    if (geocodeCache.current.has(query)) {
+      return geocodeCache.current.get(query)!;
     }
 
     try {
-      const provider = new OpenStreetMapProvider();
-      const results = await provider.search({ query: address });
-      const coordinates = results.length > 0 ? [results[0].y, results[0].x] as [number, number] : null;
-      
-      geocodeCache.current.set(address, coordinates);
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
+      const results = await geocodeProvider.current.search({ query });
+      const coordinates =
+        results.length > 0 ? ([results[0].y, results[0].x] as [number, number]) : null;
+
+      geocodeCache.current.set(query, coordinates);
+      await new Promise((resolve) => setTimeout(resolve, GEOCODE_DELAY_MS));
+
       return coordinates;
     } catch (error) {
       console.error('Erreur de géocodage:', error);
-      geocodeCache.current.set(address, null);
+      // Ne pas cacher les erreurs réseau : on pourra réessayer plus tard
+      await new Promise((resolve) => setTimeout(resolve, GEOCODE_DELAY_MS));
       return null;
     }
   };
@@ -112,6 +122,7 @@ const SupabaseMapComponent: React.FC = () => {
 
     setIsLoadingFile(true);
     setLoadingProgress(0);
+    setLoadingStatus('Lecture du fichier…');
 
     let added = 0;
     let updated = 0;
@@ -160,43 +171,50 @@ const SupabaseMapComponent: React.FC = () => {
           }
 
           setLoadingProgress(Math.round(((i + 1) / dataLines.length) * 100));
+          setLoadingStatus(`CSV ${i + 1}/${dataLines.length}`);
         }
       } else if (isKML) {
-        const parser = new DOMParser();
-        const kmlDoc = parser.parseFromString(fileText, 'text/xml');
-        const placemarks = kmlDoc.querySelectorAll('Placemark');
+        const placemarks = parseKmlPlacemarks(fileText);
+        setLoadingStatus(`${placemarks.length} points à traiter…`);
 
         for (let i = 0; i < placemarks.length; i++) {
-          const placemark = placemarks[i];
-          const nameElement = placemark.querySelector('name');
-          const addressElement = placemark.querySelector('address');
-          const descriptionElement = placemark.querySelector('description');
+          const place = placemarks[i];
+          setLoadingStatus(`Géocodage ${i + 1}/${placemarks.length} — ${place.name}`);
 
-          const name = nameElement?.textContent || 'Point sans nom';
-          const address = addressElement?.textContent?.trim() || '';
-          const description = descriptionElement?.textContent?.replace(/<br>/g, '\n') || '';
+          let latitude = place.latitude;
+          let longitude = place.longitude;
 
-          if (address) {
-            const coordinates = await geocodeAddress(address);
-            if (coordinates) {
-              const action = await upsertMember(
-                {
-                  name,
-                  latitude: coordinates[0],
-                  longitude: coordinates[1],
-                  address,
-                  description,
-                },
-                index
-              );
-              if (action === 'created') added++;
-              else updated++;
-            } else {
+          if (latitude == null || longitude == null) {
+            if (!place.geocodeQuery) {
               skipped++;
+              setLoadingProgress(Math.round(((i + 1) / placemarks.length) * 100));
+              continue;
             }
-          } else {
-            skipped++;
+            const coordinates = await geocodeAddress(place.geocodeQuery);
+            if (!coordinates) {
+              skipped++;
+              setLoadingProgress(Math.round(((i + 1) / placemarks.length) * 100));
+              continue;
+            }
+            latitude = coordinates[0];
+            longitude = coordinates[1];
           }
+
+          const action = await upsertMember(
+            {
+              name: place.name,
+              latitude,
+              longitude,
+              address: place.address || place.geocodeQuery,
+              description: place.description,
+              poste: place.poste,
+              ville: place.ville,
+              pays: place.pays,
+            },
+            index
+          );
+          if (action === 'created') added++;
+          else updated++;
 
           setLoadingProgress(Math.round(((i + 1) / placemarks.length) * 100));
         }
@@ -207,7 +225,10 @@ const SupabaseMapComponent: React.FC = () => {
         `Fichier traité !\n` +
           `✅ ${added} ajouté(s)\n` +
           `🔄 ${updated} mis à jour\n` +
-          (skipped > 0 ? `⏭️ ${skipped} ignoré(s)\n` : '')
+          (skipped > 0
+            ? `⏭️ ${skipped} ignoré(s) (géocodage impossible)\n`
+            : '') +
+          `\nAstuce : un gros KML sans coordonnées peut prendre plusieurs minutes.`
       );
       
     } catch (error) {
@@ -216,6 +237,7 @@ const SupabaseMapComponent: React.FC = () => {
     } finally {
       setIsLoadingFile(false);
       setLoadingProgress(0);
+      setLoadingStatus('');
       // Réinitialiser l'input
       if (event.target) {
         event.target.value = '';
@@ -308,12 +330,17 @@ const SupabaseMapComponent: React.FC = () => {
                 onChange={handleFileUpload}
                 className="hidden"
                 id="file-input"
+                disabled={isLoadingFile}
               />
               <label
                 htmlFor="file-input"
-                className="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors"
+                className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
+                  isLoadingFile
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-green-500 hover:bg-green-600'
+                }`}
               >
-                📁 Charger Fichier
+                {isLoadingFile ? `⏳ ${loadingProgress}%` : '📁 Charger Fichier'}
               </label>
               
               <button
@@ -400,7 +427,25 @@ const SupabaseMapComponent: React.FC = () => {
       {/* Zone de statut moderne */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="px-6 py-3">
-          {loading ? (
+          {isLoadingFile ? (
+            <div className="space-y-2">
+              <div className="flex items-center space-x-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                <span className="text-blue-600 font-medium">
+                  Import en cours ({loadingProgress}%) — {loadingStatus}
+                </span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all"
+                  style={{ width: `${loadingProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Ne ferme pas l’onglet : le géocodage OpenStreetMap est limité à ~1 requête/seconde.
+              </p>
+            </div>
+          ) : loading ? (
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
               <span className="text-blue-600 font-medium">Chargement des membres...</span>
