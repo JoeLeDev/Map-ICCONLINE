@@ -30,23 +30,25 @@ type MemberPayload = {
   pays?: string;
 };
 
+const btnBase =
+  'inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+
 const SupabaseMapComponent: React.FC = () => {
   const { members, loading, error, addMember, updateMember, loadMembers } = useMembers();
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStatus, setLoadingStatus] = useState('');
-  const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
-  const [mapZoom, setMapZoom] = useState(6);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([20, 0]);
+  const [mapZoom, setMapZoom] = useState(2);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showHelp, setShowHelp] = useState(true);
   const [newMember, setNewMember] = useState({ name: '', address: '', description: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
 
-  // Cache pour éviter de géocoder plusieurs fois la même adresse
   const geocodeCache = useRef<Map<string, [number, number] | null>>(new Map());
   const geocodeProvider = useRef(new OpenStreetMapProvider());
 
-  // Fonction pour géocoder une adresse
   const geocodeAddress = async (address: string): Promise<[number, number] | null> => {
     const query = address.trim();
     if (!query) return null;
@@ -64,15 +66,13 @@ const SupabaseMapComponent: React.FC = () => {
       await new Promise((resolve) => setTimeout(resolve, GEOCODE_DELAY_MS));
 
       return coordinates;
-    } catch (error) {
-      console.error('Erreur de géocodage:', error);
-      // Ne pas cacher les erreurs réseau : on pourra réessayer plus tard
+    } catch (err) {
+      console.error('Erreur de géocodage:', err);
       await new Promise((resolve) => setTimeout(resolve, GEOCODE_DELAY_MS));
       return null;
     }
   };
 
-  /** Ajoute ou met à jour selon la clé nom+adresse (ou nom+coords). */
   const upsertMember = async (
     payload: MemberPayload,
     index: Map<string, string>
@@ -107,12 +107,13 @@ const SupabaseMapComponent: React.FC = () => {
     return result.action;
   };
 
-  // Fonction pour gérer l'upload de fichier
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const isKML = file.name.toLowerCase().endsWith('.kml') || file.type === 'application/vnd.google-earth.kml+xml';
+    const isKML =
+      file.name.toLowerCase().endsWith('.kml') ||
+      file.type === 'application/vnd.google-earth.kml+xml';
     const isCSV = file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv';
 
     if (!isKML && !isCSV) {
@@ -128,7 +129,6 @@ const SupabaseMapComponent: React.FC = () => {
     let updated = 0;
     let skipped = 0;
 
-    // Index local pour détecter les doublons pendant tout l'import
     const index = new Map<string, string>();
     for (const member of members) {
       index.set(
@@ -145,9 +145,9 @@ const SupabaseMapComponent: React.FC = () => {
         const dataLines = lines.slice(1).filter((line) => line.trim());
 
         for (let i = 0; i < dataLines.length; i++) {
-          const values = dataLines[i].split(',').map((value) =>
-            value.trim().replace(/^"(.*)"$/, '$1')
-          );
+          const values = dataLines[i]
+            .split(',')
+            .map((value) => value.trim().replace(/^"(.*)"$/, '$1'));
 
           if (values.length >= 3) {
             const name = values[0] || 'Point sans nom';
@@ -223,32 +223,27 @@ const SupabaseMapComponent: React.FC = () => {
       await loadMembers({ silent: true });
       alert(
         `Fichier traité !\n` +
-          `✅ ${added} ajouté(s)\n` +
-          `🔄 ${updated} mis à jour\n` +
-          (skipped > 0
-            ? `⏭️ ${skipped} ignoré(s) (géocodage impossible)\n`
-            : '') +
-          `\nAstuce : un gros KML sans coordonnées peut prendre plusieurs minutes.`
+          `${added} ajouté(s)\n` +
+          `${updated} mis à jour\n` +
+          (skipped > 0 ? `${skipped} ignoré(s) (géocodage impossible)\n` : '') +
+          `\nUn gros fichier KML peut prendre plusieurs minutes.`
       );
-      
-    } catch (error) {
-      console.error('Erreur lors du chargement du fichier:', error);
+    } catch (err) {
+      console.error('Erreur lors du chargement du fichier:', err);
       alert('Erreur lors du chargement du fichier');
     } finally {
       setIsLoadingFile(false);
       setLoadingProgress(0);
       setLoadingStatus('');
-      // Réinitialiser l'input
       if (event.target) {
         event.target.value = '';
       }
     }
   };
 
-  // Fonction pour ajouter un nouveau membre
   const addNewMember = async () => {
     if (!newMember.name || !newMember.address) {
-      alert('Veuillez remplir le nom et l\'adresse');
+      alert("Veuillez remplir le nom et l'adresse");
       return;
     }
 
@@ -259,7 +254,12 @@ const SupabaseMapComponent: React.FC = () => {
         const index = new Map<string, string>();
         for (const member of members) {
           index.set(
-            memberDuplicateKey(member.name, member.address || '', member.latitude, member.longitude),
+            memberDuplicateKey(
+              member.name,
+              member.address || '',
+              member.latitude,
+              member.longitude
+            ),
             member.id
           );
         }
@@ -286,43 +286,77 @@ const SupabaseMapComponent: React.FC = () => {
       } else {
         alert('Impossible de géocoder cette adresse');
       }
-    } catch (error) {
-      console.error('Erreur lors de l\'ajout:', error);
-      alert('Erreur lors de l\'ajout du membre');
+    } catch (err) {
+      console.error("Erreur lors de l'ajout:", err);
+      alert("Erreur lors de l'ajout du membre");
     } finally {
       setIsGeocoding(false);
     }
   };
 
-  // Fonction pour centrer la carte
   const centerMap = () => {
     if (members.length > 0) {
-      const bounds = members.map(member => [member.latitude, member.longitude]);
+      const bounds = members.map((member) => [member.latitude, member.longitude] as [number, number]);
       const avgLat = bounds.reduce((sum, coord) => sum + coord[0], 0) / bounds.length;
       const avgLng = bounds.reduce((sum, coord) => sum + coord[1], 0) / bounds.length;
       setMapCenter([avgLat, avgLng]);
-      setMapZoom(10);
+      setMapZoom(3);
     } else {
-      setMapCenter([46.2276, 2.2137]);
-      setMapZoom(6);
+      setMapCenter([20, 0]);
+      setMapZoom(2);
     }
   };
 
+  const exportCsv = () => {
+    if (members.length === 0) {
+      alert('Aucun membre à exporter');
+      return;
+    }
+
+    const header = 'name,latitude,longitude,address,description,poste,ville,pays';
+    const rows = members.map((m) =>
+      [m.name, m.latitude, m.longitude, m.address, m.description, m.poste, m.ville, m.pays]
+        .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
+        .join(',')
+    );
+    const blob = new Blob([[header, ...rows].join('\n')], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `membres-fio-mfi-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="w-full h-screen flex flex-col bg-gray-50">
-      {/* Header moderne */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-xl">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <span className="text-2xl">🗺️</span>
-              <div>
-                <h1 className="text-2xl font-bold">Carte des Membres FIO-MFI</h1>
-                <p className="text-blue-100 text-sm">Base de données Supabase</p>
-              </div>
+    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-fio-paper">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-90"
+        style={{
+          background:
+            'radial-gradient(ellipse 80% 50% at 10% -10%, rgba(31,111,122,0.18), transparent 55%), radial-gradient(ellipse 60% 40% at 100% 0%, rgba(196,122,44,0.12), transparent 50%), linear-gradient(180deg, #eef4f6 0%, #f7fafb 40%, #f3f6f8 100%)',
+        }}
+      />
+
+      <header className="relative z-20 border-b border-fio-line/80 bg-fio-ink text-white shadow-panel">
+        <div className="px-4 py-4 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="fio-fade-up min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/55">
+                FIO-MFI · ICC Online
+              </p>
+              <h1 className="font-display mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
+                Carte des membres
+              </h1>
+              <p className="mt-1 max-w-xl text-sm text-white/70">
+                Visualisez le réseau mondial et mettez à jour les points depuis un fichier KML ou
+                CSV.
+              </p>
             </div>
-            
-            <div className="flex items-center space-x-3">
+
+            <div className="fio-fade-up flex flex-wrap items-center gap-2" style={{ animationDelay: '80ms' }}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -334,168 +368,254 @@ const SupabaseMapComponent: React.FC = () => {
               />
               <label
                 htmlFor="file-input"
-                className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
+                className={`${btnBase} cursor-pointer ${
                   isLoadingFile
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-500 hover:bg-green-600'
+                    ? 'bg-white/20 text-white/70'
+                    : 'bg-fio-accent text-white hover:bg-[#b36c24]'
                 }`}
               >
-                {isLoadingFile ? `⏳ ${loadingProgress}%` : '📁 Charger Fichier'}
+                {isLoadingFile ? `Import ${loadingProgress}%` : 'Importer KML / CSV'}
               </label>
-              
+
               <button
-                onClick={() => setShowAddForm(!showAddForm)}
-                className="bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                type="button"
+                onClick={() => {
+                  setShowAddForm((v) => !v);
+                  if (!showAddForm) setShowHelp(false);
+                }}
+                className={`${btnBase} bg-white/10 text-white hover:bg-white/15`}
               >
-                ➕ Ajouter Membre
+                Ajouter un membre
               </button>
-              
+
               <button
+                type="button"
                 onClick={centerMap}
-                className="bg-purple-500 hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                className={`${btnBase} bg-white/10 text-white hover:bg-white/15`}
               >
-                🎯 Centrer
+                Recentrer
               </button>
-              
+
               <button
+                type="button"
                 onClick={() => loadMembers()}
-                disabled={loading}
-                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+                disabled={loading || isLoadingFile}
+                className={`${btnBase} bg-white/10 text-white hover:bg-white/15`}
               >
-                <span>🔄</span>
-                <span>{loading ? 'Chargement...' : 'Rafraîchir'}</span>
+                {loading ? 'Chargement…' : 'Rafraîchir'}
               </button>
-              
+
               <button
-                onClick={() => window.location.reload()}
-                className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                type="button"
+                onClick={exportCsv}
+                disabled={members.length === 0}
+                className={`${btnBase} bg-white/10 text-white hover:bg-white/15`}
               >
-                🔄 Effacer
+                Exporter CSV
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHelp((v) => !v);
+                  if (!showHelp) setShowAddForm(false);
+                }}
+                className={`${btnBase} border border-white/25 bg-transparent text-white hover:bg-white/10`}
+                aria-expanded={showHelp}
+              >
+                {showHelp ? 'Masquer l’aide' : 'Comment ça marche ?'}
               </button>
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Formulaire d'ajout moderne */}
+      {showHelp && (
+        <section className="relative z-10 border-b border-fio-line bg-white/90 backdrop-blur-sm">
+          <div className="fio-fade-up px-4 py-4 sm:px-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <h2 className="font-display text-lg font-semibold text-fio-ink">
+                  Mode d’emploi — mise à jour de la carte
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-fio-ink/75">
+                  Cette carte affiche les membres FIO-MFI enregistrés en base. Pour la synchroniser
+                  avec Google My Maps : exportez le fichier <strong>KML</strong> depuis My Maps,
+                  puis utilisez <strong>Importer KML / CSV</strong>. Les points déjà présents
+                  (même nom + même adresse) sont mis à jour ; les nouveaux sont ajoutés. Un import
+                  volumineux peut prendre plusieurs minutes (géocodage automatique des adresses).
+                </p>
+              </div>
+              <ol className="grid w-full max-w-xl gap-2 text-sm sm:grid-cols-3">
+                {[
+                  {
+                    n: '1',
+                    t: 'Exporter',
+                    d: 'Dans My Maps → menu → Exporter au format KML/KMZ.',
+                  },
+                  {
+                    n: '2',
+                    t: 'Importer',
+                    d: 'Cliquez sur « Importer KML / CSV » et choisissez le fichier.',
+                  },
+                  {
+                    n: '3',
+                    t: 'Vérifier',
+                    d: 'Attendez la fin de l’import, puis parcourez la carte.',
+                  },
+                ].map((step) => (
+                  <li
+                    key={step.n}
+                    className="rounded-xl border border-fio-line bg-fio-mist/60 px-3 py-3"
+                  >
+                    <p className="text-xs font-bold uppercase tracking-wider text-fio-sea">
+                      Étape {step.n}
+                    </p>
+                    <p className="mt-1 font-semibold text-fio-ink">{step.t}</p>
+                    <p className="mt-1 text-fio-ink/65">{step.d}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </section>
+      )}
+
       {showAddForm && (
-        <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border-b border-orange-200 shadow-lg">
-          <div className="px-6 py-4">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3">Ajouter un nouveau membre</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <section className="relative z-10 border-b border-fio-line bg-white">
+          <div className="px-4 py-4 sm:px-6">
+            <h3 className="font-display text-base font-semibold text-fio-ink">
+              Ajouter un membre manuellement
+            </h3>
+            <p className="mt-1 text-sm text-fio-ink/65">
+              L’adresse sera convertie en coordonnées automatiquement.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
               <input
                 type="text"
-                placeholder="Nom du membre"
+                placeholder="Nom du membre / cellule"
                 value={newMember.name}
-                onChange={(e) => setNewMember({...newMember, name: e.target.value})}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => setNewMember({ ...newMember, name: e.target.value })}
+                className="rounded-lg border border-fio-line bg-fio-paper px-3 py-2.5 text-sm outline-none ring-fio-sea focus:ring-2"
               />
               <input
                 type="text"
-                placeholder="Adresse complète"
+                placeholder="Adresse (ville, pays…)"
                 value={newMember.address}
-                onChange={(e) => setNewMember({...newMember, address: e.target.value})}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => setNewMember({ ...newMember, address: e.target.value })}
+                className="rounded-lg border border-fio-line bg-fio-paper px-3 py-2.5 text-sm outline-none ring-fio-sea focus:ring-2"
               />
               <input
                 type="text"
                 placeholder="Description (optionnel)"
                 value={newMember.description}
-                onChange={(e) => setNewMember({...newMember, description: e.target.value})}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => setNewMember({ ...newMember, description: e.target.value })}
+                className="rounded-lg border border-fio-line bg-fio-paper px-3 py-2.5 text-sm outline-none ring-fio-sea focus:ring-2"
               />
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
+                type="button"
                 onClick={addNewMember}
                 disabled={isGeocoding}
-                className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 px-6 py-2 rounded-lg text-white font-medium transition-colors"
+                className={`${btnBase} bg-fio-sea text-white hover:bg-fio-sea-deep`}
               >
-                {isGeocoding ? '⏳ Géocodage...' : '✅ Ajouter le membre'}
+                {isGeocoding ? 'Géocodage…' : 'Enregistrer'}
               </button>
               <button
+                type="button"
                 onClick={() => setShowAddForm(false)}
-                className="bg-gray-500 hover:bg-gray-600 px-6 py-2 rounded-lg text-white font-medium transition-colors"
+                className={`${btnBase} border border-fio-line bg-white text-fio-ink hover:bg-fio-mist`}
               >
-                ❌ Annuler
+                Annuler
               </button>
             </div>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Zone de statut moderne */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="px-6 py-3">
-          {isLoadingFile ? (
-            <div className="space-y-2">
-              <div className="flex items-center space-x-3">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                <span className="text-blue-600 font-medium">
-                  Import en cours ({loadingProgress}%) — {loadingStatus}
-                </span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all"
-                  style={{ width: `${loadingProgress}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-500">
-                Ne ferme pas l’onglet : le géocodage OpenStreetMap est limité à ~1 requête/seconde.
-              </p>
+      <div className="relative z-10 border-b border-fio-line bg-white/80 px-4 py-2.5 backdrop-blur-sm sm:px-6">
+        {isLoadingFile ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-fio-sea border-t-transparent" />
+              <span className="text-sm font-medium text-fio-sea">
+                Import en cours ({loadingProgress}%) — {loadingStatus}
+              </span>
             </div>
-          ) : loading ? (
-            <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-              <span className="text-blue-600 font-medium">Chargement des membres...</span>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-fio-mist">
+              <div
+                className="h-full rounded-full bg-fio-sea transition-all duration-300"
+                style={{ width: `${loadingProgress}%` }}
+              />
             </div>
-          ) : error ? (
-            <div className="flex items-center space-x-3">
-              <span className="text-red-600">❌</span>
-              <span className="text-red-600 font-medium">Erreur: {error}</span>
-            </div>
-          ) : members.length > 0 ? (
-            <div className="flex items-center space-x-3">
-              <span className="text-green-600">✅</span>
-              <span className="text-green-600 font-bold">{members.length}</span>
-              <span className="text-gray-600">membre(s) chargé(s) depuis Supabase</span>
-            </div>
-          ) : (
-            <span className="text-gray-600">Aucun membre dans la base de données</span>
-          )}
-        </div>
+            <p className="text-xs text-fio-ink/55">
+              Ne fermez pas cet onglet. Le géocodage est limité à environ 1 adresse par seconde.
+            </p>
+          </div>
+        ) : loading && members.length === 0 ? (
+          <div className="flex items-center gap-3">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-fio-sea border-t-transparent" />
+            <span className="fio-pulse-soft text-sm font-medium text-fio-sea">
+              Chargement des membres…
+            </span>
+          </div>
+        ) : error && members.length === 0 ? (
+          <p className="text-sm font-medium text-red-700">Erreur : {error}</p>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-fio-ink/80">
+              <span className="font-bold text-fio-sea">{members.length}</span> membre
+              {members.length !== 1 ? 's' : ''} sur la carte
+            </p>
+            <p className="text-xs text-fio-ink/45">
+              Les doublons (même nom + adresse) sont mis à jour automatiquement à l’import.
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Carte */}
-      <div className="flex-1">
-        <MapContainer
-          center={mapCenter}
-          zoom={mapZoom}
-          style={{ height: '100%', width: '100%' }}
-          key={`${mapCenter[0]}-${mapCenter[1]}-${mapZoom}`}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          
-          {members.map((member) => (
-            <Marker key={member.id} position={[member.latitude, member.longitude]}>
-              <Popup>
-                <div>
-                  <h3 className="font-bold">{member.name}</h3>
-                  {member.address && (
-                    <p className="text-sm text-gray-600 mt-1">{member.address}</p>
-                  )}
-                  {member.description && (
-                    <p className="text-sm mt-2">{member.description}</p>
-                  )}
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
+      <div className="relative z-0 min-h-0 flex-1 p-3 sm:p-4">
+        <div className="h-full overflow-hidden rounded-2xl border border-fio-line bg-white shadow-panel">
+          <MapContainer
+            center={mapCenter}
+            zoom={mapZoom}
+            style={{ height: '100%', width: '100%' }}
+            key={`${mapCenter[0]}-${mapCenter[1]}-${mapZoom}`}
+            worldCopyJump
+            minZoom={2}
+            maxZoom={18}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+
+            {members.map((member) => (
+              <Marker key={member.id} position={[member.latitude, member.longitude]}>
+                <Popup>
+                  <div>
+                    <h3>{member.name}</h3>
+                    {member.poste && (
+                      <p className="text-sm text-fio-sea">{member.poste}</p>
+                    )}
+                    {(member.ville || member.pays) && (
+                      <p className="mt-1 text-sm text-gray-600">
+                        {[member.ville, member.pays].filter(Boolean).join(', ')}
+                      </p>
+                    )}
+                    {member.address && (
+                      <p className="mt-1 text-sm text-gray-600">{member.address}</p>
+                    )}
+                    {member.description && (
+                      <p className="mt-2 text-sm text-gray-700">{member.description}</p>
+                    )}
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
       </div>
     </div>
   );
