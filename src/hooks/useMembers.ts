@@ -123,8 +123,11 @@ export const useMembers = () => {
   }, []);
 
   // Ajouter un membre
-  const addMember = async (memberData: Omit<Member, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Member, 'created_at' | 'updated_at'>>) => {
-    setLoading(true);
+  const addMember = async (
+    memberData: Omit<Member, 'id' | 'created_at' | 'updated_at'> & Partial<Pick<Member, 'created_at' | 'updated_at'>>,
+    options?: { silent?: boolean }
+  ) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       // Ne pas envoyer created_at et updated_at car Supabase les génère automatiquement
@@ -138,18 +141,25 @@ export const useMembers = () => {
       if (!response.ok) throw new Error('Erreur lors de l\'ajout');
       const data = await response.json();
       // La subscription mettra à jour automatiquement l'état
-      return data.member;
+      return {
+        member: data.member as Member,
+        action: (data.action as 'created' | 'updated') || 'created'
+      };
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue');
       throw err;
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   };
 
   // Mettre à jour un membre
-  const updateMember = async (id: string, memberData: Partial<Member>) => {
-    setLoading(true);
+  const updateMember = async (
+    id: string,
+    memberData: Partial<Member>,
+    options?: { silent?: boolean }
+  ) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/members?id=${id}`, {
@@ -160,12 +170,12 @@ export const useMembers = () => {
       if (!response.ok) throw new Error('Erreur lors de la mise à jour');
       const data = await response.json();
       // La subscription mettra à jour automatiquement l'état
-      return data.member;
+      return data.member as Member;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue');
       throw err;
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   };
 

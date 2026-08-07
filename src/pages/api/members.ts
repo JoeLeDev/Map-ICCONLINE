@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { supabase } from '../../lib/supabase';
+import { memberDuplicateKey } from '../../lib/memberKey';
 
 // GET - Récupérer tous les membres
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -25,18 +26,61 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === 'POST') {
     try {
+      const name = req.body.name;
+      const address = req.body.address || '';
+      const latitude = req.body.latitude;
+      const longitude = req.body.longitude;
+      const payload = {
+        name,
+        latitude,
+        longitude,
+        address,
+        description: req.body.description || '',
+        poste: req.body.poste || '',
+        ville: req.body.ville || '',
+        pays: req.body.pays || ''
+      };
+
+      // Évite les doublons côté API (nom + adresse, ou nom + coords)
+      const { data: existingMembers, error: listError } = await supabase
+        .from('members')
+        .select('id, name, address, latitude, longitude');
+
+      if (listError) {
+        console.error('Erreur Supabase:', listError);
+        return res.status(500).json({ error: 'Erreur lors de la vérification des doublons' });
+      }
+
+      const key = memberDuplicateKey(name, address, latitude, longitude);
+      const existing = existingMembers?.find(
+        (m) =>
+          memberDuplicateKey(m.name, m.address || '', Number(m.latitude), Number(m.longitude)) ===
+          key
+      );
+
+      if (existing) {
+        const { data: updatedMember, error } = await supabase
+          .from('members')
+          .update({
+            ...payload,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Erreur Supabase:', error);
+          return res.status(500).json({ error: 'Erreur lors de la mise à jour du membre' });
+        }
+
+        res.status(200).json({ member: updatedMember, action: 'updated' });
+        return;
+      }
+
       const { data: newMember, error } = await supabase
         .from('members')
-        .insert([{
-          name: req.body.name,
-          latitude: req.body.latitude,
-          longitude: req.body.longitude,
-          address: req.body.address,
-          description: req.body.description || '',
-          poste: req.body.poste || '',
-          ville: req.body.ville || '',
-          pays: req.body.pays || ''
-        }])
+        .insert([payload])
         .select()
         .single();
 
@@ -45,7 +89,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(500).json({ error: 'Erreur lors de l\'ajout du membre' });
       }
 
-      res.status(201).json({ member: newMember });
+      res.status(201).json({ member: newMember, action: 'created' });
       return;
     } catch (error) {
       console.error('Erreur API:', error);

@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, useMap, Marker, Popup } from 'react-leaflet';
+import React, { useState, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import { OpenStreetMapProvider } from 'leaflet-geosearch';
 import { useMembers } from '../hooks/useMembers';
+import { memberDuplicateKey } from '../lib/memberKey';
 
 // Fix pour les icônes Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -14,8 +15,19 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+type MemberPayload = {
+  name: string;
+  latitude: number;
+  longitude: number;
+  address: string;
+  description: string;
+  poste?: string;
+  ville?: string;
+  pays?: string;
+};
+
 const SupabaseMapComponent: React.FC = () => {
-  const { members, loading, error, addMember, loadMembers } = useMembers();
+  const { members, loading, error, addMember, updateMember, loadMembers } = useMembers();
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [mapCenter, setMapCenter] = useState<[number, number]>([46.2276, 2.2137]);
@@ -50,6 +62,41 @@ const SupabaseMapComponent: React.FC = () => {
     }
   };
 
+  /** Ajoute ou met à jour selon la clé nom+adresse (ou nom+coords). */
+  const upsertMember = async (
+    payload: MemberPayload,
+    index: Map<string, string>
+  ): Promise<'created' | 'updated'> => {
+    const key = memberDuplicateKey(
+      payload.name,
+      payload.address,
+      payload.latitude,
+      payload.longitude
+    );
+    const existingId = index.get(key);
+    const data = {
+      name: payload.name,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      address: payload.address,
+      description: payload.description,
+      poste: payload.poste || '',
+      ville: payload.ville || '',
+      pays: payload.pays || '',
+    };
+
+    if (existingId) {
+      await updateMember(existingId, data, { silent: true });
+      return 'updated';
+    }
+
+    const result = await addMember(data, { silent: true });
+    if (result.member?.id) {
+      index.set(key, result.member.id);
+    }
+    return result.action;
+  };
+
   // Fonction pour gérer l'upload de fichier
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -66,18 +113,28 @@ const SupabaseMapComponent: React.FC = () => {
     setIsLoadingFile(true);
     setLoadingProgress(0);
 
+    let added = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    // Index local pour détecter les doublons pendant tout l'import
+    const index = new Map<string, string>();
+    for (const member of members) {
+      index.set(
+        memberDuplicateKey(member.name, member.address || '', member.latitude, member.longitude),
+        member.id
+      );
+    }
+
     try {
       const fileText = await file.text();
-      let parsedData: any[] = [];
 
       if (isCSV) {
-        // Parser CSV
         const lines = fileText.split('\n');
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          
-          const values = line.split(',').map(value => 
+        const dataLines = lines.slice(1).filter((line) => line.trim());
+
+        for (let i = 0; i < dataLines.length; i++) {
+          const values = dataLines[i].split(',').map((value) =>
             value.trim().replace(/^"(.*)"$/, '$1')
           );
 
@@ -89,24 +146,22 @@ const SupabaseMapComponent: React.FC = () => {
             const description = values[4] || '';
 
             if (!isNaN(lat) && !isNaN(lng)) {
-              // Ajouter directement en base
-              await addMember({
-                name,
-                latitude: lat,
-                longitude: lng,
-                address,
-                description,
-                poste: '',
-                ville: '',
-                pays: '',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              });
+              const action = await upsertMember(
+                { name, latitude: lat, longitude: lng, address, description },
+                index
+              );
+              if (action === 'created') added++;
+              else updated++;
+            } else {
+              skipped++;
             }
+          } else {
+            skipped++;
           }
+
+          setLoadingProgress(Math.round(((i + 1) / dataLines.length) * 100));
         }
       } else if (isKML) {
-        // Parser KML
         const parser = new DOMParser();
         const kmlDoc = parser.parseFromString(fileText, 'text/xml');
         const placemarks = kmlDoc.querySelectorAll('Placemark');
@@ -122,31 +177,38 @@ const SupabaseMapComponent: React.FC = () => {
           const description = descriptionElement?.textContent?.replace(/<br>/g, '\n') || '';
 
           if (address) {
-            // Géocoder l'adresse
             const coordinates = await geocodeAddress(address);
             if (coordinates) {
-              await addMember({
-                name,
-                latitude: coordinates[0],
-                longitude: coordinates[1],
-                address,
-                description,
-                poste: '',
-                ville: '',
-                pays: '',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              });
+              const action = await upsertMember(
+                {
+                  name,
+                  latitude: coordinates[0],
+                  longitude: coordinates[1],
+                  address,
+                  description,
+                },
+                index
+              );
+              if (action === 'created') added++;
+              else updated++;
+            } else {
+              skipped++;
             }
+          } else {
+            skipped++;
           }
 
-          // Mettre à jour la progression
-          const progress = Math.round(((i + 1) / placemarks.length) * 100);
-          setLoadingProgress(progress);
+          setLoadingProgress(Math.round(((i + 1) / placemarks.length) * 100));
         }
       }
 
-      alert(`Fichier chargé avec succès !`);
+      await loadMembers({ silent: true });
+      alert(
+        `Fichier traité !\n` +
+          `✅ ${added} ajouté(s)\n` +
+          `🔄 ${updated} mis à jour\n` +
+          (skipped > 0 ? `⏭️ ${skipped} ignoré(s)\n` : '')
+      );
       
     } catch (error) {
       console.error('Erreur lors du chargement du fichier:', error);
@@ -172,22 +234,33 @@ const SupabaseMapComponent: React.FC = () => {
     try {
       const coordinates = await geocodeAddress(newMember.address);
       if (coordinates) {
-        await addMember({
-          name: newMember.name,
-          latitude: coordinates[0],
-          longitude: coordinates[1],
-          address: newMember.address,
-          description: newMember.description,
-          poste: '',
-          ville: '',
-          pays: '',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-        
+        const index = new Map<string, string>();
+        for (const member of members) {
+          index.set(
+            memberDuplicateKey(member.name, member.address || '', member.latitude, member.longitude),
+            member.id
+          );
+        }
+
+        const action = await upsertMember(
+          {
+            name: newMember.name,
+            latitude: coordinates[0],
+            longitude: coordinates[1],
+            address: newMember.address,
+            description: newMember.description,
+          },
+          index
+        );
+
         setNewMember({ name: '', address: '', description: '' });
         setShowAddForm(false);
-        alert('Membre ajouté avec succès !');
+        await loadMembers({ silent: true });
+        alert(
+          action === 'updated'
+            ? 'Membre déjà présent — informations mises à jour.'
+            : 'Membre ajouté avec succès !'
+        );
       } else {
         alert('Impossible de géocoder cette adresse');
       }
